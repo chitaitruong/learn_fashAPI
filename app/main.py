@@ -3,6 +3,9 @@ from fastapi import FastAPI, Response, status, HTTPException
 from fastapi.params import Body
 from pydantic import BaseModel
 from random import randrange
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import time
 
 app = FastAPI()
 
@@ -12,6 +15,16 @@ class Post(BaseModel):
     published: bool = True
     rating: Optional[int] = None
 
+while True:
+    try:
+        conn = psycopg2.connect(host = "localhost", database = "fastapi", user = "postgres", password = "1",cursor_factory=RealDictCursor)
+        cursor = conn.cursor()
+        print("Database connection was succesfully")
+        break
+    except Exception as error:
+        print("Connecting to database failed")
+        print("Error", error)
+        time.sleep(2)
 my_posts = [{"title": "abc", "content":"abc","id":1}, {"title": "bcd", "content":"bcd","id":2}]
 def find_post(id):
     for p in my_posts:
@@ -27,7 +40,9 @@ def root():
 
 @app.get("/posts")
 def get_posts():
-    return {"data": my_posts}
+    cursor.execute("""SELECT * FROM posts""")
+    posts = cursor.fetchall()
+    return {"posts": posts}
 
 @app.get("/posts/latest")
 def get_latest_post():
@@ -36,38 +51,37 @@ def get_latest_post():
 
 @app.get("/posts/{id}")
 def get_post(id: int, response: Response):
-    post = find_post(id)
+    cursor.execute("""SELECT * FROM posts WHERE id = %s""", (str(id),))
+    post = cursor.fetchone()
     if not post:
         # response.status_code = status.HTTP_404_NOT_FOUND
         # return {"message": f"post with id: {id} was not found"}
-
         #better use
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail=f"post with id: {id} was not found")
     return {"post_detail": post}
 
 @app.post("/posts", status_code=status.HTTP_201_CREATED)
 def create_posts(new_post: Post):
-    post_dict = new_post.dict()
-    post_dict["id"] = randrange(0,2000)
-    my_posts.append(post_dict)
-    return {"data" : new_post}
+    cursor.execute("""insert into posts(title, content, published) values (%s, %s, %s) RETURNING *""", (new_post.title, new_post.content, new_post.published))
+    new_post_data = cursor.fetchone()
+    return {"data" : new_post_data}
 
 @app.put("/posts/{id}")
 def update_posts(id: int, post: Post):
-    index = find_index_post(id)
-    if index == None:
+    cursor.execute("""update posts set title = %s, content = %s, published = %s where id = %s RETURNING *""", (post.title, post.content, post.published,str(id)))
+    updated_post = cursor.fetchone()
+    conn.commit()
+    if updated_post == None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"post with id: {id} does not exist")
-    post_dict = post.dict()
-    post_dict["id"] = id
-    my_posts[index] = post_dict
-    return {"data" : post_dict}
+    return {"data" : updated_post}
 
 @app.delete("/posts/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_posts(id: int):
-    index = find_index_post(id)
-    if index == None:
+    cursor.execute("""DELETE FROM posts WHERE id = %s RETURNING *""", (str(id),))
+    post = cursor.fetchone()
+    conn.commit()
+    if post == None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"post with id: {id} does not exist")
-    my_posts.pop(index)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
