@@ -6,6 +6,8 @@ from random import randrange
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import time
+import pymssql
+import pandas as pd
 
 app = FastAPI()
 
@@ -14,6 +16,9 @@ class Post(BaseModel):
     content: str
     published: bool = True
     rating: Optional[int] = None
+class XuatFileRequest(BaseModel):
+    ltc_id: int
+    file_name: str
 
 while True:
     try:
@@ -41,6 +46,8 @@ def root():
 @app.get("/posts")
 def get_posts():
     cursor.execute("""SELECT * FROM posts""")
+    colnames = [desc[0] for desc in cursor.description]
+    print(colnames)
     posts = cursor.fetchall()
     return {"posts": posts}
 
@@ -83,5 +90,44 @@ def delete_posts(id: int):
     if post == None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"post with id: {id} does not exist")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+@app.post("/xuatfile")
+def xuatfile(xuatFileRequest: XuatFileRequest):
+    server = "localhost:1433"
+    user = "sa"
+    password = "123456"
+    sql = '''select tam3.sinhvien_id, tam3.ngay, isnull(dd.trang_thai,0) trangthai into #t1 from (select * from 
+    (select sinhvien_id from loptinchi_sinhvien where loptinchi_id = %d) tam1,
+    (select tam5.ngay_id,tam4.ngay from ngay tam4 join (select ngay_id from loptinchingay where loptinchi_id = %d) tam5 on tam4.id = tam5.ngay_id ) tam2) tam3 left join diemdanh dd on tam3.ngay_id = dd.ngay_id and tam3.sinhvien_id = dd.sinhvien_id ORDER BY tam3.sinhvien_id
+
+
+    select tam4.ngay into #tam6 from ngay tam4 join (select ngay_id from loptinchingay where loptinchi_id = %d) tam5 on tam4.id = tam5.ngay_id
+
+    declare @colnameList varchar (MAX)
+    set @colnameList = NULL
+    SELECT @colnameList =  COALESCE( + @colnameList + '],[ ', '') + convert(varchar,ngay)
+    FROM #tam6
+    SET @colnameList = '[' + @colnameList + ']'
+    declare @SQLQuery NVARCHAR(MAX)
+    set @SQLQuery = 'SELECT sinhvien_id, '+ @colnameList+' into #t2 FROM #t1
+    PIVOT
+    (AVG(trangthai) FOR ngay IN (' + @colnameList+'))  AS PivotTable;  select u.hoten, t.* from #t2 t join users u on t.sinhvien_id = u.id'
+
+    exec(@SQLQuery)'''
+    conn1 = pymssql.connect(server='127.0.0.1', user='sa', password='123456', database='final_attendance_system')
+    cursor1 = conn1.cursor(as_dict=True)
+    cursor1.execute(sql, (xuatFileRequest.ltc_id,xuatFileRequest.ltc_id,xuatFileRequest.ltc_id,))
+    column_names = [item[0] for item in cursor1 .description]
+    print(column_names)
+    # convert into dataframe
+    df = pd.DataFrame(data=cursor1)
+
+    #convert into excel
+    df.to_excel(xuatFileRequest.file_name + '.xlsx', index=False)
+    for row in cursor1:
+        #print("Email=%s, Hoten=%s" % (row['email'], row['hoten']))
+        print(row)
+
+    conn1.close()
+
 
 
